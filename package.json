@@ -1,0 +1,41 @@
+{
+  "name": "social-lab-ic-badia-trecenta",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "smtp:test": "node --env-file=.env.local scripts/test-smtp.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "postinstall": "node scripts/setup-vision-assets.mjs"
+  },
+  "dependencies": {
+    "@auth/drizzle-adapter": "1.11.3",
+    "@mediapipe/tasks-vision": "1.0.1",
+    "better-sqlite3": "12.11.1",
+    "drizzle-orm": "0.45.2",
+    "emailjs": "5.0.3",
+    "lucide-react": "0.542.0",
+    "next": "16.3.4",
+    "next-auth": "5.0.0-beta.32",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.18.3",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "nodemailer": "9.1.0"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+.next/
+.env
+.env.local
+coverage/
+npm-debug.log*
+*.tsbuildinfo
+.playwright-cli/
+output/playwright/
+public/mediapipe/
+public/models/
+data/
+.deploy/
