@@ -1,0 +1,33 @@
+#!/bin/bash
+
+set -u
+
+APPNAME="pubblicazioni-social"
+PIDFILE="$HOME/apps/$APPNAME/tmp/node.pid"
+
+if [ ! -e "$PIDFILE" ]; then
+  echo "$APPNAME already stopped."
+  exit 0
+fi
+
+PID="$(cat "$PIDFILE")"
+if ! kill -0 "$PID" >/dev/null 2>&1; then
+  rm -f "$PIDFILE"
+  echo "$APPNAME already stopped; stale PID file removed."
+  exit 0
+fi
+
+kill "$PID"
+for _ in 1 2 3 4 5 6; do
+  if ! kill -0 "$PID" >/dev/null 2>&1; then
+    rm -f "$PIDFILE"
+    echo "Stopped $APPNAME."
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "$APPNAME did not stop gracefully; forcing termination."
+kill -9 "$PID"
+rm -f "$PIDFILE"
+echo "Stopped $APPNAME."

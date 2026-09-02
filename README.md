@@ -110,21 +110,22 @@ SQLite.
    il backup del file SQLite e dei relativi file `-wal`/`-shm`, preferibilmente
    tramite gli strumenti di backup SQLite.
 
-## Deploy SFTP su dolomiti2
+## Deploy con rsync su dolomiti2
 
-Il progetto genera un'applicazione Next.js standalone e la trasferisce tramite
-il client OpenSSH `sftp`. La destinazione predefinita è:
+Il progetto genera un'applicazione Next.js standalone e la sincronizza tramite
+`rsync` su SSH. La destinazione finale predefinita è:
 
 ```text
 dolomiti2:/home/dolomiti/apps/pubblicazioni-social/app
 ```
 
 L'host `dolomiti2` deve essere configurato in `~/.ssh/config` e utilizzabile con
-una chiave SSH o un agente, perché il trasferimento batch non può chiedere una
-password in modo interattivo. Per verificare l'accesso senza pubblicare:
+una chiave SSH o un agente. Sia la macchina locale sia quella remota devono
+disporre di `rsync`. Per verificare l'accesso senza pubblicare:
 
 ```bash
-sftp dolomiti2
+ssh dolomiti2
+rsync --version
 ```
 
 Il deploy completo si esegue dalla radice del progetto:
@@ -133,14 +134,43 @@ Il deploy completo si esegue dalla radice del progetto:
 make deploy
 ```
 
-Il comando esegue typecheck, lint, test e build; prepara `.deploy/app` con il
-runtime Node.js, gli asset statici e i modelli MediaPipe; infine genera ed
-esegue un batch SFTP con percorsi espliciti. Non trasferisce `.env.local`, il
-database SQLite, i sorgenti o altri file locali. Gli eventuali collegamenti
-simbolici prodotti dalla build vengono risolti in file reali, perché SFTP non
-deve ricrearli sul server. La preparazione elimina inoltre l'eventuale cartella
+Il comando esegue typecheck, lint, test e build e prepara `.deploy/app` con il
+runtime Node.js, gli asset statici e i modelli MediaPipe. La build viene prima
+sincronizzata in `/home/dolomiti/apps/pubblicazioni-social/.deploy/app`, senza
+interrompere il servizio. Completato il trasferimento, `make deploy` esegue in
+sequenza i file remoti `stop`, la promozione locale dello staging verso `app`
+con `rsync`, e infine `start`. In questo modo il fermo è limitato alla sola
+sincronizzazione tra directory sul server.
+
+Anche gli script `start` e `stop` sono mantenuti dal progetto e aggiornati
+durante l'attivazione. `start` carica `config/production.env` tramite l'opzione
+nativa `node --env-file` e avvia il runtime standalone con `node app/server.js`
+su `127.0.0.1:30128`; non usa `next start`.
+`stop` gestisce anche il caso in cui il processo sia già fermo o il PID file sia
+obsoleto.
+
+`better-sqlite3` include codice nativo. Durante l'attivazione lo script
+`install-native` installa una copia compatibile con la GLIBC del server in una
+cache versionata sotto `.native`, la inserisce nello standalone e ne verifica
+il funzionamento con un database in memoria. Il download avviene soltanto al
+primo deploy di ciascuna versione di `better-sqlite3`; i deploy successivi
+riutilizzano la cache. L'installazione usa inizialmente `npm --ignore-scripts` e
+prova `prebuild-install`. Se non esiste un binario precompilato, compila soltanto
+il modulo nella stessa cache con `node-gyp`, gli header Node di sistema e
+`devtoolset-11`, già disponibile sul managed server. Non usa privilegi elevati,
+non installa pacchetti globali e non modifica GLIBC. Prima di sostituire un
+binario diverso ne conserva una copia sotto `.native/backups`.
+
+Durante entrambe le sincronizzazioni principali `rsync` mostra l'avanzamento
+complessivo, la percentuale completata, la velocità, il tempo stimato e le
+statistiche finali. L'output è espresso in unità leggibili (KB, MB e GB).
+
+Il deploy non trasferisce `.env.local`, database SQLite, sorgenti o altri file
+locali. Gli eventuali collegamenti simbolici prodotti dalla build vengono
+risolti in file reali. La preparazione elimina inoltre l'eventuale cartella
 `data` tracciata da Next.js e interrompe il deploy se rileva file `.env*` o
-SQLite nel pacchetto.
+SQLite nel pacchetto. Durante la promozione vengono protetti anche eventuali
+`data/` e `.env*` già presenti dentro `app`.
 
 Ad ogni deploy viene inoltre copiato il template non riservato:
 
@@ -157,6 +187,10 @@ Sono disponibili anche:
 ```bash
 make help            # mostra tutti i target
 make deploy-package  # prepara il pacchetto senza collegarsi al server
+make deploy-upload   # aggiorna lo staging remoto senza riavviare
+make deploy-activate # promuove lo staging esistente con stop/start
+make deploy-stop     # esegue il file remoto stop
+make deploy-start    # esegue il file remoto start
 make deploy-clean    # elimina il solo pacchetto locale
 ```
 
@@ -165,21 +199,23 @@ Host e destinazione possono essere sovrascritti senza modificare il Makefile:
 ```bash
 make deploy \
   DEPLOY_HOST=altro-host \
+  DEPLOY_BASE_DIR=/percorso/assoluto \
   DEPLOY_REMOTE_DIR=/percorso/assoluto/app \
   DEPLOY_CONFIG_DIR=/percorso/assoluto/config
 ```
 
 ### Configurazione del processo sul server
 
-SFTP trasferisce i file ma non può avviare o riavviare Node.js. Il processo deve
-eseguire `server.js` dalla directory pubblicata, con una configurazione analoga:
+I file remoti `start` e `stop` si occupano rispettivamente di avviare e fermare
+il processo. Il processo deve eseguire `server.js` dalla directory pubblicata,
+con una configurazione analoga:
 
 ```ini
 [Service]
 WorkingDirectory=/home/dolomiti/apps/pubblicazioni-social/app
 Environment=NODE_ENV=production
 Environment=HOSTNAME=127.0.0.1
-Environment=PORT=3000
+Environment=PORT=30128
 EnvironmentFile=/home/dolomiti/apps/pubblicazioni-social/config/production.env
 ExecStart=/usr/bin/node /home/dolomiti/apps/pubblicazioni-social/app/server.js
 Restart=always
@@ -193,12 +229,13 @@ Per conservare il database al di fuori dei file applicativi è consigliato:
 DATABASE_URL="file:/home/dolomiti/apps/pubblicazioni-social/data/pubblicazioni-social.sqlite"
 ```
 
-Il deploy carica `server.js` e `package.json` per ultimi, ma non effettua un
-riavvio atomico del servizio. Dopo `make deploy` occorre quindi riavviare o
-ricaricare il processo con il sistema di supervisione configurato sul server.
-Poiché `better-sqlite3` contiene un modulo nativo, la macchina che esegue la
-build deve usare lo stesso sistema operativo e la stessa architettura del
-server di produzione (oltre a una versione compatibile di Node.js).
+L'upload verso lo staging è incrementale: dopo il primo deploy `rsync`
+trasferisce soltanto i file modificati. Se l'upload fallisce, l'applicazione
+attiva non viene fermata né modificata. La fase di attivazione parte soltanto
+dopo una sincronizzazione completa.
+La build può quindi essere preparata su una distribuzione Linux con una GLIBC
+diversa, purché architettura e versione principale di Node.js siano compatibili
+con il server.
 
 ## Verifiche
 

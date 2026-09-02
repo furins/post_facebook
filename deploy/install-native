@@ -1,0 +1,82 @@
+#!/bin/bash
+
+APPNAME="pubblicazioni-social"
+APPDIR="$HOME/apps/$APPNAME"
+PROJECTDIR="$APPDIR/app"
+CACHEDIR="$APPDIR/.native"
+
+source scl_source enable nodejs20 devtoolset-11
+set -eu
+
+NODE="$(command -v node)"
+NPM="$(command -v npm)"
+NODE_GYP="$($NODE -p "require.resolve('node-gyp/bin/node-gyp.js', {paths:[require('path').dirname(process.execPath) + '/../lib/node_modules/npm']})")"
+NODE_PREFIX="$(dirname "$(dirname "$NODE")")"
+NODE_MAJOR="$($NODE -p 'process.versions.node.split(".")[0]')"
+HEADER_MAJOR="$(awk '/^#define NODE_MAJOR_VERSION / {print $3; exit}' "$NODE_PREFIX/include/node/node_version.h")"
+
+if [ "$NODE_MAJOR" != "$HEADER_MAJOR" ]; then
+  echo "Node runtime/header mismatch: runtime $NODE_MAJOR, headers $HEADER_MAJOR." >&2
+  exit 1
+fi
+VERSION="$($NODE -p "require('$PROJECTDIR/node_modules/better-sqlite3/package.json').version")"
+VERSIONCACHE="$CACHEDIR/better-sqlite3-$VERSION"
+CACHEMODULE="$VERSIONCACHE/node_modules/better-sqlite3"
+CACHEBINARY="$CACHEMODULE/build/Release/better_sqlite3.node"
+
+if [ ! -f "$CACHEBINARY" ] || ! "$NODE" -e "require(process.argv[1])" "$CACHEMODULE"; then
+  echo "Downloading prebuilt better-sqlite3 $VERSION for the production server..."
+  mkdir -p "$VERSIONCACHE"
+  "$NPM" install \
+    --prefix "$VERSIONCACHE" \
+    --omit=dev \
+    --no-save \
+    --no-package-lock \
+    --no-audit \
+    --no-fund \
+    --ignore-scripts \
+    "better-sqlite3@$VERSION"
+  if ! (
+    cd "$CACHEMODULE"
+    "$VERSIONCACHE/node_modules/.bin/prebuild-install" \
+      --runtime=node \
+      --target="$($NODE -p 'process.versions.node')"
+  ); then
+    echo "No prebuilt binary available; compiling in the isolated application cache..."
+    (
+      cd "$CACHEMODULE"
+      "$NODE" "$NODE_GYP" rebuild --release --nodedir="$NODE_PREFIX"
+    )
+  fi
+fi
+
+if [ ! -f "$CACHEBINARY" ]; then
+  echo "Native better-sqlite3 binary was not produced." >&2
+  exit 1
+fi
+
+INSTALLED=0
+BACKUPSTAMP="$(date '+%Y%m%d_%H%M%S')"
+BACKUPDIR="$CACHEDIR/backups/$BACKUPSTAMP"
+for MODULEDIR in \
+  "$PROJECTDIR/node_modules/better-sqlite3" \
+  "$PROJECTDIR"/.next/node_modules/better-sqlite3-*; do
+  if [ -d "$MODULEDIR/build/Release" ]; then
+    TARGET="$MODULEDIR/build/Release/better_sqlite3.node"
+    if [ -f "$TARGET" ] && ! cmp -s "$CACHEBINARY" "$TARGET"; then
+      mkdir -p "$BACKUPDIR"
+      cp -p "$TARGET" "$BACKUPDIR/better_sqlite3-$INSTALLED.node"
+    fi
+    install -m 0755 "$CACHEBINARY" "$TARGET"
+    INSTALLED=$((INSTALLED + 1))
+  fi
+done
+
+if [ "$INSTALLED" -eq 0 ]; then
+  echo "No better-sqlite3 module found in the standalone application." >&2
+  exit 1
+fi
+
+cd "$PROJECTDIR" || exit 1
+"$NODE" -e "const Database=require('better-sqlite3'); const db=new Database(':memory:'); db.prepare('select 1').get(); db.close();"
+echo "better-sqlite3 $VERSION ready for this server ($INSTALLED target(s))."

@@ -1,0 +1,51 @@
+#!/bin/bash
+
+APPNAME="pubblicazioni-social"
+APPDIR="$HOME/apps/$APPNAME"
+PROJECTDIR="$APPDIR/app"
+CONFIGFILE="$APPDIR/config/production.env"
+LOGDIR="$HOME/logs/apps/$APPNAME"
+TMPDIR="$APPDIR/tmp"
+PIDFILE="$TMPDIR/node.pid"
+
+source scl_source enable nodejs20
+set -u
+NODE="$(command -v node)"
+
+mkdir -p "$LOGDIR" "$TMPDIR"
+
+if [ -e "$PIDFILE" ] && pgrep -F "$PIDFILE" >/dev/null 2>&1; then
+  echo "$APPNAME already running."
+  exit 0
+fi
+
+rm -f "$PIDFILE"
+
+if [ ! -f "$PROJECTDIR/server.js" ]; then
+  echo "Standalone server missing: $PROJECTDIR/server.js" >&2
+  exit 1
+fi
+
+if [ ! -f "$CONFIGFILE" ]; then
+  echo "Production configuration missing: $CONFIGFILE" >&2
+  echo "Copy config/production.env.example to config/production.env and configure it." >&2
+  exit 1
+fi
+
+export NODE_ENV="production"
+export HOSTNAME="127.0.0.1"
+export PORT="30128"
+
+cd "$PROJECTDIR" || exit 1
+nohup "$NODE" --env-file="$CONFIGFILE" "$PROJECTDIR/server.js" </dev/null >"$LOGDIR/logfile.log" 2>&1 &
+PID=$!
+echo "$PID" >"$PIDFILE"
+
+sleep 1
+if ! kill -0 "$PID" >/dev/null 2>&1; then
+  rm -f "$PIDFILE"
+  echo "Unable to start $APPNAME. Check $LOGDIR/logfile.log." >&2
+  exit 1
+fi
+
+echo "Started $APPNAME with PID $PID on 127.0.0.1:30128."
