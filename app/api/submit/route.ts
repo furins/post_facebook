@@ -4,7 +4,12 @@ import { auth } from "@/auth";
 import { belongsToAllowedDomain } from "@/lib/access-control";
 import { ACCEPTED_MEDIA, MAX_MEDIA_ITEMS } from "@/lib/constants";
 import { sqlite } from "@/lib/db";
-import { ensureMandatoryHashtags, normalizeHashtags } from "@/lib/social-prompt";
+import {
+  ensureMandatoryHashtags,
+  mandatoryHashtagsForSchool,
+  normalizeHashtags,
+  schoolTypeLabel,
+} from "@/lib/social-prompt";
 import { createSmtpClient } from "@/lib/smtp";
 import {
   escapeHtml,
@@ -35,12 +40,6 @@ function enforceSubmissionRateLimit(identifier: string) {
   sqlite
     .prepare("INSERT INTO submissionRequest (identifier, createdAt) VALUES (?, ?)")
     .run(identifier, now);
-}
-
-function platformLabel(platform: z.infer<typeof submissionSchema>["platform"]) {
-  if (platform === "facebook") return "Facebook";
-  if (platform === "instagram") return "Instagram";
-  return "Facebook e Instagram";
 }
 
 export async function POST(request: Request) {
@@ -78,7 +77,7 @@ export async function POST(request: Request) {
   const parsed = submissionSchema.safeParse({
     title: formData.get("title"),
     text: formData.get("text"),
-    platform: formData.get("platform"),
+    schoolType: formData.get("schoolType"),
     tone: formData.get("tone"),
   });
   if (!parsed.success) {
@@ -91,9 +90,9 @@ export async function POST(request: Request) {
   const media = formData
     .getAll("media")
     .filter((entry): entry is File => entry instanceof File && entry.size > 0);
-  if (media.length === 0 || media.length > MAX_MEDIA_ITEMS) {
+  if (media.length > MAX_MEDIA_ITEMS) {
     return NextResponse.json(
-      { error: `Allega da 1 a ${MAX_MEDIA_ITEMS} immagini o video.` },
+      { error: `Puoi allegare al massimo ${MAX_MEDIA_ITEMS} immagini o video.` },
       { status: 400 },
     );
   }
@@ -112,9 +111,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const mandatoryHashtags = normalizeHashtags(process.env.MANDATORY_HASHTAGS);
+  const additionalHashtags = normalizeHashtags(process.env.MANDATORY_HASHTAGS);
+  const mandatoryHashtags = mandatoryHashtagsForSchool(
+    parsed.data.schoolType,
+    additionalHashtags,
+  );
   const finalText = ensureMandatoryHashtags(parsed.data.text, mandatoryHashtags);
-  const destination = platformLabel(parsed.data.platform);
+  const school = schoolTypeLabel(parsed.data.schoolType);
   const sentAt = new Intl.DateTimeFormat("it-IT", {
     dateStyle: "long",
     timeStyle: "short",
@@ -161,7 +164,8 @@ export async function POST(request: Request) {
         "NUOVO CONTENUTO · PUBBLICAZIONI SOCIAL",
         "",
         `Titolo: ${parsed.data.title}`,
-        `Destinazione: ${destination}`,
+        "Destinazione: Facebook e Instagram",
+        `Grado scolastico: ${school}`,
         `Tono: ${parsed.data.tone}`,
         `Inviato da: ${senderEmail}`,
         `Data: ${sentAt}`,
@@ -182,7 +186,8 @@ export async function POST(request: Request) {
                     <p style="margin:0;color:#176f68;font-size:12px;font-weight:700;letter-spacing:.1em">NUOVO CONTENUTO · PUBBLICAZIONI SOCIAL</p>
                     <h1 style="font-family:Georgia,serif;font-size:30px;margin:10px 0 24px">${escapeHtml(parsed.data.title)}</h1>
                     <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5">
-                      <tr><td style="padding:5px 12px 5px 0;color:#61736f">Destinazione</td><td>${escapeHtml(destination)}</td></tr>
+                      <tr><td style="padding:5px 12px 5px 0;color:#61736f">Destinazione</td><td>Facebook e Instagram</td></tr>
+                      <tr><td style="padding:5px 12px 5px 0;color:#61736f">Grado scolastico</td><td>${escapeHtml(school)}</td></tr>
                       <tr><td style="padding:5px 12px 5px 0;color:#61736f">Tono</td><td>${escapeHtml(parsed.data.tone)}</td></tr>
                       <tr><td style="padding:5px 12px 5px 0;color:#61736f">Inviato da</td><td>${escapeHtml(senderEmail)}</td></tr>
                       <tr><td style="padding:5px 12px 5px 0;color:#61736f">Data</td><td>${escapeHtml(sentAt)}</td></tr>

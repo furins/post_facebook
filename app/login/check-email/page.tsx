@@ -1,5 +1,6 @@
 import { ArrowLeft, MailCheck, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { SchoolLogo } from "@/components/school-logo";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +8,7 @@ export default function CheckEmailPage() {
   return (
     <main className="message-shell">
       <section className="message-card">
-        <span className="brand-mark message-brand">SL</span>
+        <SchoolLogo className="message-brand" priority />
         <div className="message-icon"><MailCheck size={31} /></div>
         <p className="eyebrow">Controlla la posta</p>
         <h1>Il link è in viaggio</h1>

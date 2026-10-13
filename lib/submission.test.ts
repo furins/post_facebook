@@ -24,7 +24,7 @@ describe("submission", () => {
       submissionSchema.safeParse({
         title: "Laboratorio di scienze",
         text: "Un testo sufficientemente lungo per la pubblicazione.",
-        platform: "both",
+        schoolType: "primaria",
         tone: "coinvolgente",
       }).success,
     ).toBe(true);
@@ -32,7 +32,7 @@ describe("submission", () => {
       submissionSchema.safeParse({
         title: "No",
         text: "troppo corto",
-        platform: "altro",
+        schoolType: "altro",
         tone: "coinvolgente",
       }).success,
     ).toBe(false);

@@ -10,25 +10,41 @@ destinati a Facebook e Instagram.
 - controllo server-side del dominio prima dell'invio e al momento dell'accesso;
 - link monouso con scadenza di 10 minuti e protezione dalle richieste ripetute;
 - utenti, token e sessioni persistenti in SQLite;
-- caricamento locale di immagini e video con drag-and-drop;
+- procedura guidata in quattro fasi, con navigazione avanti e indietro;
+- caricamento facoltativo di immagini e video con drag-and-drop;
+- acquisizione diretta di foto e video dalla fotocamera, quando supportata dal
+  browser;
 - verifica dell'orientamento uniforme delle immagini;
 - rotazione, rimozione e ritaglio quadrato di tutte le immagini;
-- rilevamento locale dei volti con MediaPipe, selezione individuale e sfocatura;
+- avviso sulla possibile presenza di volti; rilevamento locale con MediaPipe
+  su richiesta, marcatura manuale e sfocatura;
+- scansione a riquadri per i volti piccoli nelle foto di gruppo; verifica visiva
+  e marcatura manuale restano necessarie prima dell’invio;
 - download delle immagini elaborate;
-- riscrittura del testo tramite OpenRouter e `deepseek/deepseek-v4-pro`;
-- emoji, hashtag pertinenti e aggiunta garantita degli hashtag obbligatori;
+- valutazione sintetica e proposta di testo per Facebook e Instagram tramite
+  OpenRouter, avviate automaticamente quando si entra nel confronto;
+- confronto di originale e proposta in due aree modificabili, con scelta del
+  testo da inviare; l’originale resta disponibile se l’AI è lenta o non funziona;
+- emoji e hashtag pertinenti modificabili dall’utente, con aggiunta garantita
+  di `#icbadiatrecenta` e dell’hashtag relativo al grado scolastico;
 - invio del contenuto completo a un indirizzo fisso, con allegati e copia
   automatica all'utente autenticato.
 
 Il browser esegue localmente tutte le operazioni grafiche. Titolo, testo e
-preferenze editoriali vengono inviati all'endpoint OpenRouter quando si usa il
-pulsante AI; soltanto al momento della consegna il documento completo e i media
+preferenze editoriali vengono inviati all'endpoint OpenRouter quando si entra
+nel confronto dei testi; soltanto al momento della consegna il documento completo e i media
 elaborati vengono inviati al server per comporre l'email.
+Se la riscrittura fallisce, titolo, testo, richiesta tecnica e risposta ricevuta
+vengono inviati via email a `REWRITE_ERROR_EMAIL_TO` (predefinito:
+`furins@gmail.com`) per la diagnosi. La chiave API non è inclusa.
 
 ## Configurazione
 
 Requisiti: Node.js 20.9 o successivo, un server SMTP e un disco persistente per
 SQLite.
+
+L’acquisizione dalla fotocamera richiede un browser compatibile e un contesto
+sicuro HTTPS (su `localhost` è consentita anche durante lo sviluppo).
 
 1. Installa le dipendenze:
 
@@ -59,10 +75,18 @@ SQLite.
    SUBMISSION_MAX_MB="15"
 
    OPENROUTER_API_KEY="chiave-openrouter"
-   OPENROUTER_MODEL="deepseek/deepseek-v4-pro"
+   OPENROUTER_MODEL="qwen/qwen3.7-flash"
+   REWRITE_ERROR_EMAIL_TO="furins@gmail.com"
    APP_URL="http://localhost:3000"
-   MANDATORY_HASHTAGS="#ICBadiaTrecenta,#Scuola"
+   # Opzionale: #icbadiatrecenta e il grado scolastico sono già automatici
+   MANDATORY_HASHTAGS=""
    ```
+
+   La riscrittura usa Qwen 3.7 Flash e passa automaticamente a DeepSeek V4
+   Flash Latest se OpenRouter non riesce a servire il primo modello. Se imposti
+   `OPENROUTER_MODEL`, questo diventa il modello principale; DeepSeek resta il
+   modello di riserva. Il ragionamento interno è disabilitato per mantenere
+   breve il tempo di risposta e contenere il costo.
 
    Una chiave per `AUTH_SECRET` può essere generata con:
 
@@ -245,6 +269,35 @@ npm run lint
 npm test
 npm run build
 ```
+
+## Diagnosi della revisione AI
+
+Se la riscrittura fallisce, apri gli strumenti sviluppatore del browser, scheda
+**Rete**, e seleziona la richiesta `POST /api/rewrite`. Controlla il codice HTTP,
+il tipo di contenuto e la risposta. Una risposta HTML o vuota indica che un
+server o proxy ha risposto al posto dell’API JSON; un errore JSON contiene di
+solito il motivo e, per i problemi con OpenRouter, un `requestId`.
+L’API interrompe la richiesta a OpenRouter dopo 60 secondi. Il risultato appare
+appena è disponibile. Il pulsante sotto il testo originale permette di sceglierlo
+anche mentre la proposta è in preparazione o se si verifica un errore.
+
+Sul server di produzione cerca lo stesso riferimento nei log:
+
+```bash
+rg -n 'ID_MOSTRATO_NELL_ERRORE|\[rewrite\]' ~/logs/apps/pubblicazioni-social/logfile.log
+```
+
+I log della riscrittura riportano stato HTTP e tipo della risposta di OpenRouter,
+oppure la causa di un errore di rete. Non registrano titolo, testo del post,
+chiave API o corpo della risposta. Un HTTP 401 indica una sessione non valida;
+un HTTP 503 indica la chiave OpenRouter mancante; un HTTP 502 indica un problema
+nel collegamento o nella risposta di OpenRouter. Se la risposta del browser è
+HTML, verifica anche i log del proxy e che la richiesta raggiunga questa app.
+Le email diagnostiche contengono il testo originale, il prompt inviato a
+OpenRouter e la risposta ricevuta, ma non l'header di autorizzazione. Per gli
+errori HTML osservati dal browser, la risposta allegata è limitata a 50.000
+caratteri. Se l'applicazione è completamente irraggiungibile, non può inviare
+la segnalazione: in quel caso restano i log del proxy.
 
 ## Note operative
 

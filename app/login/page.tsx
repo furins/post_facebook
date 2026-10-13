@@ -2,6 +2,7 @@ import { ArrowRight, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-rea
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { requestMagicLink } from "@/app/actions/auth";
+import { SchoolLogo } from "@/components/school-logo";
 import { ALLOWED_DOMAIN } from "@/lib/access-control";
 
 export const dynamic = "force-dynamic";
@@ -24,13 +25,9 @@ export default async function LoginPage({ searchParams }: Props) {
   return (
     <main className="login-shell">
       <section className="login-story">
-        <div className="login-brand"><span className="brand-mark light">PS</span><span><strong>Pubblicazioni social</strong><small>IC Badia Trecenta</small></span></div>
+        <div className="login-brand"><SchoolLogo priority /><span><strong>Pubblicazioni social</strong><small>IC Badia Trecenta</small></span></div>
         <div className="story-copy">
-          <div className="hero-badge dark"><span /> Comunicazione scolastica</div>
-          <h1>Ogni momento<br />merita il <em>racconto giusto.</em></h1>
-          <p>Uno spazio semplice e protetto per creare post curati, accessibili e rispettosi della privacy.</p>
-          <div className="feature-row"><span><ShieldCheck /></span><div><strong>Privacy al centro</strong><small>I volti vengono elaborati sul tuo dispositivo.</small></div></div>
-          <div className="feature-row"><span><Sparkles /></span><div><strong>Una mano con le parole</strong><small>L’AI migliora il testo senza alterare i fatti.</small></div></div>
+
         </div>
         <p className="login-quote">“La scuola è il luogo dove le storie di domani cominciano.”</p>
       </section>
@@ -56,7 +53,7 @@ export default async function LoginPage({ searchParams }: Props) {
                 type="email"
                 inputMode="email"
                 autoComplete="email"
-                placeholder={`nome.cognome@${ALLOWED_DOMAIN}`}
+                placeholder={`cognome.nome@${ALLOWED_DOMAIN}`}
                 pattern={`[^@\\s]+@${ALLOWED_DOMAIN.replaceAll(".", "\\.")}`}
                 required
               />

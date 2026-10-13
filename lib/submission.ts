@@ -1,11 +1,12 @@
 import { z } from "zod";
+import { SCHOOL_TYPES } from "./social-prompt";
 
 export const DEFAULT_SUBMISSION_MAX_MB = 15;
 
 export const submissionSchema = z.object({
   title: z.string().trim().min(3).max(120),
   text: z.string().trim().min(20).max(7000),
-  platform: z.enum(["facebook", "instagram", "both"]),
+  schoolType: z.enum(SCHOOL_TYPES),
   tone: z.enum(["istituzionale", "coinvolgente", "celebrativo"]),
 });
 

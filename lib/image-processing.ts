@@ -8,6 +8,7 @@ export type FaceRegion = {
   height: number;
   confidence: number;
   selected: boolean;
+  manual?: boolean;
 };
 
 export type ProcessedImage = {
@@ -15,6 +16,32 @@ export type ProcessedImage = {
   width: number;
   height: number;
 };
+
+const SMALL_FACE_SCAN_MIN_SIDE = 200;
+const LOW_RESOLUTION_MAX_SIDE = 600;
+const DETECTION_CANVAS_MAX_SIDE = 1024;
+const DUPLICATE_OVERLAP_THRESHOLD = 0.55;
+
+export function shouldScanFaceTiles(width: number, height: number) {
+  return Math.min(width, height) >= SMALL_FACE_SCAN_MIN_SIDE;
+}
+
+export function faceScanPlan(width: number, height: number) {
+  const lowResolution = Math.min(width, height) < LOW_RESOLUTION_MAX_SIDE;
+  const tileRatio = lowResolution ? 1 / 3 : 0.5;
+  const tileWidth = Math.round(width * tileRatio);
+  const tileHeight = Math.round(height * tileRatio);
+  const outputScale = Math.min(
+    lowResolution ? 2 : 1,
+    DETECTION_CANVAS_MAX_SIDE / Math.max(tileWidth, tileHeight),
+  );
+  const steps = lowResolution ? 4 : 2;
+  const offsets = Array.from(
+    { length: steps + 1 },
+    (_, index) => (1 - tileRatio) * index / steps,
+  );
+  return { tileWidth, tileHeight, outputScale, offsets };
+}
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string) {
   return new Promise<Blob>((resolve, reject) => {
@@ -133,34 +160,162 @@ async function getFaceDetector() {
       return FaceDetector.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath: "/models/blaze_face_short_range.tflite",
+          delegate: "GPU",
         },
         runningMode: "IMAGE",
-        minDetectionConfidence: 0.55,
+        minDetectionConfidence: 0.35,
+        minSuppressionThreshold: 0.3,
       });
-    })();
+    })().catch((error) => {
+      // A failed initialization must not poison all subsequent retry attempts.
+      detectorPromise = null;
+      throw error;
+    });
   }
   return detectorPromise;
 }
 
-export async function detectFaces(source: Blob): Promise<FaceRegion[]> {
-  const detector = await getFaceDetector();
-  const bitmap = await createImageBitmap(source);
-  const result = detector.detect(bitmap);
-  bitmap.close();
+function overlapOnSmallerRegion(first: FaceRegion, second: FaceRegion) {
+  const intersectionWidth = Math.max(
+    0,
+    Math.min(first.x + first.width, second.x + second.width) -
+      Math.max(first.x, second.x),
+  );
+  const intersectionHeight = Math.max(
+    0,
+    Math.min(first.y + first.height, second.y + second.height) -
+      Math.max(first.y, second.y),
+  );
+  const intersection = intersectionWidth * intersectionHeight;
+  const smallerArea = Math.min(
+    first.width * first.height,
+    second.width * second.height,
+  );
+  return smallerArea > 0 ? intersection / smallerArea : 0;
+}
 
-  return result.detections.flatMap((detection, index) => {
+export function deduplicateFaceRegions(faces: FaceRegion[]) {
+  const kept: FaceRegion[] = [];
+  for (const face of [...faces].sort(
+    (first, second) => second.confidence - first.confidence,
+  )) {
+    if (
+      !kept.some(
+        (candidate) =>
+          overlapOnSmallerRegion(face, candidate) >=
+          DUPLICATE_OVERLAP_THRESHOLD,
+      )
+    ) {
+      kept.push(face);
+    }
+  }
+  return kept;
+}
+
+function regionsFromDetection(
+  result: ReturnType<import("@mediapipe/tasks-vision").FaceDetector["detect"]>,
+  sourceWidth: number,
+  sourceHeight: number,
+  offsetX = 0,
+  offsetY = 0,
+  scaleX = 1,
+  scaleY = 1,
+) {
+  return result.detections.flatMap((detection, index): FaceRegion[] => {
     const box = detection.boundingBox;
     if (!box) return [];
+    const x = Math.max(0, offsetX + box.originX * scaleX);
+    const y = Math.max(0, offsetY + box.originY * scaleY);
+    const right = Math.min(
+      sourceWidth,
+      offsetX + (box.originX + box.width) * scaleX,
+    );
+    const bottom = Math.min(
+      sourceHeight,
+      offsetY + (box.originY + box.height) * scaleY,
+    );
+    if (right <= x || bottom <= y) return [];
     return [
       {
-        id: `${Date.now()}-${index}`,
-        x: box.originX,
-        y: box.originY,
-        width: box.width,
-        height: box.height,
+        id: `candidate-${index}-${offsetX}-${offsetY}`,
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
         confidence: detection.categories[0]?.score ?? 0,
         selected: true,
       },
     ];
   });
+}
+
+export async function detectFaces(source: Blob): Promise<FaceRegion[]> {
+  const detector = await getFaceDetector();
+  const bitmap = await createImageBitmap(source);
+  const candidates: FaceRegion[] = [];
+  try {
+    candidates.push(
+      ...regionsFromDetection(
+        detector.detect(bitmap),
+        bitmap.width,
+        bitmap.height,
+      ),
+    );
+
+    if (shouldScanFaceTiles(bitmap.width, bitmap.height)) {
+      const { tileWidth, tileHeight, outputScale, offsets } = faceScanPlan(
+        bitmap.width,
+        bitmap.height,
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(tileWidth * outputScale));
+      canvas.height = Math.max(1, Math.round(tileHeight * outputScale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas non disponibile");
+
+      for (const yRatio of offsets) {
+        for (const xRatio of offsets) {
+          const sourceX = Math.min(
+            bitmap.width - tileWidth,
+            Math.round(bitmap.width * xRatio),
+          );
+          const sourceY = Math.min(
+            bitmap.height - tileHeight,
+            Math.round(bitmap.height * yRatio),
+          );
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(
+            bitmap,
+            sourceX,
+            sourceY,
+            tileWidth,
+            tileHeight,
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          );
+          candidates.push(
+            ...regionsFromDetection(
+              detector.detect(canvas),
+              bitmap.width,
+              bitmap.height,
+              sourceX,
+              sourceY,
+              tileWidth / canvas.width,
+              tileHeight / canvas.height,
+            ),
+          );
+        }
+      }
+    }
+  } finally {
+    bitmap.close();
+  }
+
+  const detectionId = Date.now();
+  return deduplicateFaceRegions(candidates).map((face, index) => ({
+    ...face,
+    id: `${detectionId}-${index}`,
+  }));
 }
